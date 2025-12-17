@@ -114,6 +114,29 @@ esphome:
 esp8266:
   board: d1
 
+captive_portal:
+
+globals:
+  - id: target_level
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+script:
+  - id: adjust_fan_speed
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: |-
+              return id(led1).state != id(target_level);
+          then:
+            - logger.log:
+                format: "Adjusting fan: current=%d target=%d"
+                args: [ 'int(id(led1).state)', 'id(target_level)' ]
+            - button.press: uppatvind_button
+            - delay: 3s
+    
 sensor:
   - platform: pulse_width
     pin: D6
@@ -130,16 +153,18 @@ sensor:
       # the LED is off which is why 0 (off state) is returned in the
       # default case.
       - multiply: 1000000
-      - lambda: !lambda |- 
-          switch (int(x)) {
-            case 20:
-              return 1;
-            case 100:
-              return 2;
-            case 320:
-              return 3;
-            default:
-              return 0;
+      - lambda: !lambda |-
+          int poff = 0;
+          int y = int(x);
+          ESP_LOGD("custom", "led1_pulse_width: %d", y);
+          if (y >= 15 and y <= 35) {
+            return 1;
+          } else if (y >= 95 and y <= 105) {
+            return 2;
+          } else if (y >= 315 and y <= 325) {
+            return 3;
+          } else {
+            return 0;
           }
       - max:
           window_size: 3
@@ -161,9 +186,47 @@ output:
 
 button:
   - platform: output
+    id: uppatvind_button
     name: "UPPÅTVIND Button"
     output: output1
     duration: 100ms
+
+fan:
+  - platform: template
+    name: "UPPÅTVIND Fan"
+    speed_count: 100   # allows percentage control in HA
+
+    on_turn_off:
+      - lambda: |-
+          id(target_level) = 0;
+      - script.execute: adjust_fan_speed
+
+    on_turn_on:
+      - lambda: |-
+          if (id(target_level) == 0) {
+            id(target_level) = 1;
+          }
+      - script.execute: adjust_fan_speed
+
+    on_speed_set:
+      - lambda: |-
+          int pct = x;
+          int lvl = 0;
+
+          if (pct == 0) {
+            lvl = 0;
+          } else if (pct <= 33) {
+            lvl = 1;
+          } else if (pct <= 66) {
+            lvl = 2;
+          } else {
+            lvl = 3;
+          }
+
+          ESP_LOGI("fan", "Requested %d%% → level %d", pct, lvl);
+          id(target_level) = lvl;
+      - script.execute: adjust_fan_speed
+
 ```
 
 ## Change Filter LED
